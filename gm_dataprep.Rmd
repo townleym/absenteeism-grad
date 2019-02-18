@@ -1,0 +1,217 @@
+---
+title: "Prep data for grad modeling"
+author: "Matthew Townley"
+date: "1/15/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Effect of absenteeism on graduation rates
+
+Ecological analysis of school-level data to understand whether high rates of chronic absenteeism predict low graduation rates.
+
+Some links (so I can close these in my browser)
+
+
+# Load/clean data
+
+These data come from ....
+
+<https://www2.ed.gov/about/inits/ed/edfacts/data-files/index.html#acgr>
+<https://ocrdata.ed.gov/DataFileUsersManual>
+
+There's ... lots of problems in the data we must wrangle first
+
+Need Helen to enter text about where 'joined1314' came from
+
+```{r data_setup, eval=TRUE, echo=F}
+require(magrittr)
+setwd('/Users/matt/Documents/projects/absenteeism-grad')
+
+y14 = read.csv("joined1314.csv", header = TRUE, as.is = T) 
+y16 = read.csv("joined1516a.csv", header = TRUE, as.is = T)
+
+dim(y14)
+y14$ALL_RATE_1314 %>% table %>% cbind
+y14[grepl("-", y14$ALL_RATE_1314), "ALL_RATE_1314"] %>% table %>% cbind %>% sum
+
+ta = y14[c(grep("^GE", y14$ALL_RATE_1314), grep("^LE", y14$ALL_RATE_1314)), c("ALL_RATE_1314", "TOT_ENR_F", "TOT_ENR_M")]
+# ta[, c("ALL_RATE_1314", "TOT_ENR_F", "TOT_ENR_M")]
+ta2 = apply(ta[, c("TOT_ENR_F", "TOT_ENR_M")], 1, function(x) {sum(x, na.rm = T)})
+ta = data.frame(ta, tot_enr = ta2, stringsAsFactors = F)
+head(ta)
+ta[1:10, c("ALL_RATE_1314", "tot_enr")]
+ta_list = split(ta[, "tot_enr"], f = ta[,"ALL_RATE_1314"])
+# ta_list = split(ta, f = ta[,"ALL_RATE_1314"])
+head(ta_list[[1]])
+
+sapply(ta_list, function(x) { quantile(x, 0:10 / 10, na.rm = T)})
+
+tata = y14[grep("^GE99", y14$ALL_RATE_1314),c("LEA_STATE", "LEA_NAME", "SCH_NAME", "TOT_ENR_F", "TOT_ENR_M")]
+tata[grep("MD", tata$LEA_STATE),]
+table(tata$LEA_STATE)
+```
+
+Several things need to be fixed before we can analyze the data.
+
+1. Most of the count columns are broken out by sex. Reaggregate those.
+2. The graduation rate field is text with a lot of things like 'GE' (greater than or equal)
+3. The data are counts. Lots of approaches to that. See the next top-level section
+
+I've left these sections in for transparency about _how_ we're fixing up the data for analysis.
+
+## Re-aggregate the sex-specific columns 
+
+This is pretty easy since each column name has a trailing "_M" or "_F" respectively. 
+
+*Approach*
+
+I'll `grep` the column names for those that end with a "_M" or "_F" and simply add the two dataframes.
+
+```{r collapse_sex, eval=T, echo=T} 
+# create a collapsed dataframe that is the sum of each of the sex-specific columns
+colnames_m = names(y14)[grep('_M$', names(y14))]
+colnames_f = names(y14)[grep('_F$', names(y14))]
+sex_collapsed = y14[,colnames_m] + y14[,colnames_f]
+
+# strip the trailing "_M" from the consolidated column names
+names(sex_collapsed) = lapply(names(sex_collapsed), function(x) {substr(x, 1, nchar(x) - 2)}) %>% unlist
+
+# add back the remaining columns
+# Use this function to find the non-matching column names
+"%notin%" = function(x, table) match(x, table, nomatch = 0) < 1
+
+othernames = names(y14)[which(names(y14) %notin% c(colnames_m, colnames_f))]
+
+# Create a new dataframe with the consolidated values
+s14 = data.frame(y14[,othernames], sex_collapsed, stringsAsFactors = F)
+# drop the duplicate column from the merge
+s14 = s14[,-grep("LEAID", names(s14))[2]]
+names(s14)[grep("LEAID", names(s14))] = "LEAID"
+
+# make all the column names lower case
+names(s14) = tolower(names(s14))
+
+# clean up
+# rm(list = c("colnames_m", "colnames_f", "othernames", "y14"))
+```
+
+
+## Turn all the Grad-rate text values into numeric
+
+*Approach*: three things we have to do:
+
+1. Deal with the GE/LE columns
+2. Deal with the ranges (e.g. 40-44)
+3. Convert the single numbers to numeric format
+
+For each case (respectively) we will: 
+
+1. Take the threshold number. I.e. GE80 = 80%
+2. Split the range
+3. Simply convert the numbers
+
+```{r fix_grad_rate, echo = T, eval = T}
+# names(s14)[grep("rate", names(s14))]
+# uncomment to see all possible values
+# table(s14$all_rate_1314, useNA = "ifany") %>% cbind # what a mess
+
+# first, eliminate the NA rows
+s14 = s14[which(!is.na(s14$all_rate_1314)),]
+
+# 14-OCT is 10-14
+# 19-Nov is 11-19
+# 9-Jun is 6-9
+
+# GE50, 80, 90, 95, 99 
+# LE1, 10, 20, 5, 50
+# PS?
+
+# fix up the ones that look like dates
+# I'm guessing this is an excel artifact where:
+s14[which(s14$all_rate_1314 == "14-Oct"), "all_rate_1314"] = "10-14"
+s14[which(s14$all_rate_1314 == "19-Nov"), "all_rate_1314"] = "11-19"
+s14[which(s14$all_rate_1314 == "9-Jun"), "all_rate_1314"] = "6-9"
+
+# Create a list of all the rate values, split by dashes
+ratesplit = strsplit(s14$all_rate_1314, "-")
+
+# encode the re-coding rules into a single function
+# the function works on a single vector (of any length) 
+# we can *apply* this function to the list created above
+numerifier = function(vec) {
+
+if(length(vec) == 1) {
+  
+  # Case 1: the GE/LE/LT values 
+  if((grepl("^G", vec) | grepl("^L", vec))) {
+     return(as.numeric(substr(vec, 3, nchar(vec))) / 100) # return threshold
+   } else if(grepl("^PS", vec)) {
+     return(NA) # no idea what 'PS' means
+   } else { # Case 3: the single values
+     return(as.numeric(vec) / 100) # if a single number, return the number
+   }
+}
+ 
+  # Case 2: the ranges (return midpoint)
+  if(length(vec) > 1) {return(mean(as.numeric(vec))/100)}
+}
+
+# try it
+# sapply(ratesplit[1:50], numerifier) # looks like it works
+
+# do 'em all
+s14$grad_rate = sapply(ratesplit, numerifier)
+```
+
+
+
+```{r convert_to_rates, echo = T, eval = T}
+
+# absenteeism rate
+abs_r = s14[,"tot_absent"] / s14[,"tot_enr"]
+# plot(density(abs_r, na.rm = T))
+
+# graduation rate
+grad_r = s14[,"grad_rate"]
+# plot(density(grad_r, na.rm = T))
+
+
+# structural conditions
+sports_r = s14[,"tot_sssports"] / s14[,"tot_enr"] # 
+names_teach = names(s14)[grep("_fteteach", names(s14))] 
+teach_r = sweep(s14[,names_teach], 1, s14[,"tot_enr"], "/") # teacher ratios
+
+# administrative care
+names_civr = names(s14)[grep("_hb", names(s14))]
+civr_r = sweep(s14[,names_civr], 1, s14[,"tot_enr"], "/")
+
+# student engagement/achievement
+names_enr = names(s14)[grep("enr_", names(s14))]
+enr_r = sweep(s14[,names_enr], 1, s14[,"tot_enr"], "/")
+names_pass = names(s14)[grep("algpass_", names(s14))] # only have for algebra
+pass_r = sweep(s14[,names_pass], 1, s14[,"tot_enr"], "/")
+spart_r = s14[,"tot_sspart"] / s14[,"tot_enr"] # sports participation?
+names_ap = names(s14)[grep("_ap", names(s14))]
+ap_r = sweep(s14[,names_ap], 1, s14[,"tot_enr"], "/")
+names_gt = names(s14)[grep("_gt", names(s14))]
+gt_r = s14[,names_gt] / s14[,"tot_enr"]
+
+# combine into a dataframe so we can easily eliminate weird values
+a_frame = data.frame(grad_r, abs_r, teach_r, civr_r, enr_r, pass_r, spart_r, ap_r, gt_r)
+
+# Encoding NA/No information as negative values
+# summary(a_frame)
+
+# every row has a column with negative values
+# which means a row-wise deletion of NA will give us a 
+# zero-length dataset. This might wind up being the killer
+negs = which(apply(a_frame, 1, function(x) any(x < 1)))
+dim(a_frame[negs,]) # every row has a neg 
+
+write.csv(a_frame, file = "y1314_clean.csv", row.names = F)
+```
+

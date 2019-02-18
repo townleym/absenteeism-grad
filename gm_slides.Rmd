@@ -1,0 +1,25 @@
+---
+title: "Slides"
+author: "Matthew Townley"
+date: "2/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Effect of absenteeism on graduation rates
+
+Ecological analysis of school-level data to understand whether high rates of chronic absenteeism predict low graduation rates.
+
+Some links (so I can close these in my browser)
+
+
+# Load/clean data
+
+These data come from ....
+
+<https://www2.ed.gov/about/inits/ed/edfacts/data-files/index.html#acgr>
+<https://ocrdata.ed.gov/DataFileUsersManual>
+

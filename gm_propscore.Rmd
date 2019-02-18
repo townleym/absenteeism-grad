@@ -1,0 +1,383 @@
+---
+title: "XGBoost propensity score estimate"
+author: "Matthew Townley"
+date: "2/11/2019"
+output: html_document
+---
+
+```{r setup, echo = F, include = T, eval = T}
+a_frame = read.csv(file = "y1314_clean.csv", as.is = T)
+
+libs = c("xgboost", "caret", "rsample", "pdp", "lime", "Matching", "MatchIt")
+# lapply(libs, install.packages, character.only = T)
+lapply(libs, library, character.only = T)
+
+```
+
+
+# Approach
+
+1. dichotomize high absenteeism
+2. assess standardized differences in covariates
+3. then throw them all in the model anyway
+4. assess balance
+
+# Dichotomize
+
+First make sure we have rates only $0 <= r <=1$
+
+```{r}
+# require('rpart')
+a_frame = a_frame[which(!is.na(a_frame$abs_r)),]
+a_frame = a_frame[which(a_frame$abs_r <= 1 & a_frame$abs_r > 0),]
+a_frame$abs_r = round(a_frame$abs_r, 2)
+
+a_frame = a_frame[which(!is.na(a_frame$grad_r)),]
+a_frame = a_frame[which(a_frame$grad_r <= 1 & a_frame$grad_r > 0),]
+a_frame$grad_r = round(a_frame$grad_r, 2)
+
+```
+
+## Quick exploratory
+
+Take a look at the  distribution of abseteeism and graduation rates
+
+Absenteeism:
+
+```{r}
+
+quantile(a_frame$abs_r, probs = 0:10 / 10)
+quantile(a_frame$abs_r, probs = 0:4 / 4)
+boxplot(a_frame$abs_r)
+plot(density(a_frame$abs_r))
+
+# d.mod = rpart(grad_r ~ abs_r, data = a_frame, method = 'anova')
+# summary(d.mod)
+# plot(d.mod)
+# text(d.mod)
+```
+
+Graduation:
+
+```{r}
+
+quantile(a_frame$grad_r, probs = 0:10 / 10)
+quantile(a_frame$grad_r, probs = 0:4 / 4)
+boxplot(a_frame$grad_r)
+plot(density(a_frame$grad_r))
+
+```
+
+
+Means within decile strata (good example of split/apply/combine)
+
+```{r}
+quantile(a_frame$abs_r, probs = 0:4 / 4)
+quantile(a_frame$abs_r, probs = 0:10 / 10)
+f_absr = cut(a_frame$abs_r, breaks = quantile(a_frame$abs_r, probs = 0:10 / 10))
+# data.frame(a_frame$abs_r, f_absr) %>% head(100)
+
+s_gradr = split(a_frame$grad_r, f_absr)
+lapply(s_gradr, mean, na.rm = T)
+
+```
+
+
+## Where to split
+
+Find the split in absenteeism rates that gives the most information about the relationship with graduation rates.
+
+Is that cheating? Not if we think there's a crucial threshold of absenteeism rates at which graduation outcomes are really, really poor.
+
+Use entropy, gini, RMSE.
+
+I'm kinda proud of this
+
+put the formulas in (later) from here: http://www.stats.ox.ac.uk/~flaxman/HT17_lecture13.pdf
+
+RMSE
+
+$rmse = \sqrt{\frac{\sum_i{(\hat{y}-y_i)^2}}{n}}$
+
+Entropy [Shannon](https://en.wikipedia.org/wiki/Entropy_(information_theory))
+
+$H(X) = \sum_{k=1}^K{P(X = a_k) \times -lnP(X = a_k)}$
+
+Gini
+
+$G(X) = \sum_{k=1}^K{2P(X = a_k)(1 - P(X = a_k))}$
+
+
+Reading back, I need to use Information Gain to split, then calculate entropies, etc...
+
+```{r define_functions}
+rmse = function(vec) {
+  vec = vec[which(!is.na(vec))]
+  sqrt( sum((vec - mean(vec))**2) / length(vec) )
+}
+
+entropy = function(vec) {
+  pr = table(vec) / sum(table(vec))
+  sum(pr * -log(pr))
+}
+
+gini = function(vec) {
+  pr = table(vec) / sum(table(vec))
+  sum(pr * (1-pr) * 2) 
+}
+
+```
+
+Take a look at every possible split
+
+```{r dichotomoze_abs_exp1}
+
+gradr = a_frame[,"grad_r"]
+absr = a_frame[,"abs_r"]
+
+splitpoint = 0.5
+f_absr = cut(absr, breaks = quantile(absr, probs = c(0,splitpoint,1)))
+
+s_gradr = split(gradr, f = f_absr)
+sapply(s_gradr, rmse)
+sapply(s_gradr, gini)
+sapply(s_gradr, entropy)
+
+
+```
+
+```{r dichotomize_abs_exp_all}
+
+splitpoints = c(0.2, 0.5, 0.8)
+
+split_walker = function(y, f, splits, FN = rmse) {
+  
+  FUN = match.fun(FN)
+  
+  f_f = cut(f, breaks = c(0,splits,1)) # if you want quantiles, define outside the function
+  s_y = split(y, f = f_f)
+  sapply(s_y, FUN)
+}
+
+splitpoints = 1:99 / 100
+
+entropies = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = entropy) 
+entropies = do.call('rbind', entropies)
+rownames(entropies) = splitpoints
+
+ginis = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = gini) 
+ginis = do.call('rbind', ginis)
+rownames(ginis) = splitpoints
+
+mses = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = rmse) 
+mses = do.call('rbind', mses)
+rownames(mses) = splitpoints
+mses[order(mses[,2], decreasing = F),][1:10,]
+
+
+```
+
+
+
+
+```{r dichotomize_abs}
+f_absr = cut(a_frame$abs_r, breaks = quantile(a_frame$abs_r, probs = c(0,0.5,1)))
+lapply(split(a_frame$grad_r, f_absr), entropy)
+lapply(split(a_frame$grad_r, f_absr), function(x) {mean(x, na.rm = T)})
+
+a_frame$treat = 0
+a_frame[which(a_frame$abs_r >= quantile(a_frame$abs_r, 0.5)),"treat"] = 1
+
+aggregate(grad_r ~ treat, data = a_frame, FUN = "mean")
+
+```
+
+# standardized differences
+
+```{r standardized_diff}
+
+a_split = split(a_frame, f = a_frame$treat)
+
+means = aggregate(x = a_frame, by = list(a_frame$treat), function(x) { mean(x, na.rm = T)})
+sds = aggregate(x = a_frame, by = list(a_frame$treat), function(x) { sd(x, na.rm = T)})
+
+d = (means[2,] - means[1,]) / sqrt(apply(sds**2, 2, sum) / 2)
+sort(d)
+```
+
+
+# calculate propensity score
+
+
+```{r gbm_setup, echo = F, include = T, eval = T}
+libs = c("xgboost", "caret", "rsample", "pdp", "lime")
+# lapply(libs, install.packages, character.only = T)
+lapply(libs, library, character.only = T)
+
+a_frame = a_frame[which(!is.na(a_frame$grad_r)),]
+a_frame = a_frame[which(a_frame$abs_r < 1),]
+
+summary(a_frame$abs_r)
+
+# set.seed(1274)
+# g_split <- initial_split(a_frame, prop = (3/4))
+# g_train <- training(g_split)
+# g_test <- testing(g_split)
+# 
+# 
+# features_train = g_train[,-1]
+# response_train = g_train[,"grad_r"]
+# 
+# features_test = g_test[,-1]
+# response_test = g_test[,"grad_r"]
+
+features_train = a_frame[,-c(1,2,38)]
+response_train = a_frame[,'treat']
+
+```
+
+
+```{r gbm_prop_score, echo = T, include = T, eval = T}
+set.seed(1228)
+
+params = list(
+  eta = .1,
+  max_depth = 9,
+  min_child_weight = 3,
+  subsample = .8,
+  colsample_bytree = .9
+)
+
+start.time = proc.time()
+
+xgb.fit1 = xgboost(
+  data = features_train %>% as.matrix,
+  label = response_train,
+  params = params,
+  missing = NA,
+  nrounds = 1000,
+  nfold = 5,
+  # objective = "reg:logistic",  # for regression models
+  verbose = 0,               # silent,
+  early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+
+  )
+proc.time() - start.time
+
+quantile(response_train, probs = 0:4 / 4) %>% round(3)
+xgb.fit1$evaluation_log[which.min(xgb.fit1$evaluation_log$train_rmse),]
+
+logit = predict(xgb.fit1, features_train %>% as.matrix)
+
+odds = exp(logit)
+prob = odds / (1 + odds)
+# summary(xgb.fit1)
+```
+
+```{r}
+source('~/Documents/rfuns/mMisc/R/mMisc.R')
+
+roc_ps = roclines(features_train, logit)
+plot(roc_ps, type = "l")
+abline(a = 0, 1)
+
+# points(x = (0:100 / 100), y = (0:100 / 100), lty = 2, col = "grey40", type = 'l')
+# plot(x = (0:100 / 100), y = (0:100 / 100), lty = 2, col = "grey40", type = 'l', add = T)
+```
+
+# check overlap
+
+```{r}
+boxplot(split(prob, f = a_frame$treat), xlab = "treatment", ylab = "estimated propensity scores")
+
+# plot(density(prob))
+```
+
+
+# assess balance
+
+```{r}
+
+start.time = proc.time()
+
+xgb.fit.final = xgboost(
+  data = features_train %>% as.matrix,
+  label = response_train,
+  params = params,
+  missing = NA,
+  nrounds = 1000,
+  nfold = 5,
+  # objective = "reg:linear",  # for regression models
+  verbose = 0,               # silent,
+  early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+
+  )
+proc.time() - start.time
+
+importance_matrix <- xgb.importance(model = xgb.fit.final)
+
+# variable importance plot
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain")
+```
+```{r}
+pdp = xgb.fit.final %>%
+  partial(xgb.fit.final, pred.var = "abs_r", n.trees = 109, grid.resolution = 100, train = features_train)   %>%
+  autoplot(rug = TRUE, train = features_train) +
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle("PDP")
+
+ice <- xgb.fit.final %>%
+  partial(pred.var = "Gr_Liv_Area_clean", n.trees = 1576, grid.resolution = 100, train = features_train, ice = TRUE) %>%
+  autoplot(rug = TRUE, train = features_train, alpha = .1, center = TRUE) +
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle("ICE")
+
+gridExtra::grid.arrange(pdp, ice, nrow = 1)
+```
+
+```{r param_search, echo = T, include = T, eval = T}
+
+start.time = proc.time()
+
+param.grid = expand.grid(
+  eta = c(.01, .05, .1, .3),
+  max_depth = c(1, 3, 5, 7),
+  min_child_weight = c(1, 3, 5, 7),
+  subsample = c(.65, .8, 1), 
+  colsample_bytree = c(.8, .9, 1),
+  optimal_trees = NA,               # a place to dump results
+  min_RMSE = NA                     # a place to dump results
+)
+
+for (i in 1:nrow(param.grid)) {
+  
+  params = list(
+  eta = param.grid[i, "eta"],
+  max_depth = param.grid[i, "max_depth"],
+  min_child_weight = param.grid[i, "min_child_weight"],
+  subsample = param.grid[i, "subsample"],
+  colsample_bytree = param.grid[i, "colsample_bytree"]
+)
+  
+  xgb.tune = xgb.cv(
+    data = features_train %>% as.matrix,
+    label = response_train,
+    params = params,
+    missing = NA,
+    nrounds = 5000,
+    nfold = 5,
+    # objective = "reg:linear",  # for regression models
+    verbose = 0,               # silent,
+    early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+    )
+
+  hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+  hyper_grid$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+
+
+}
+
+proc.time() - start.time
+
+```
+

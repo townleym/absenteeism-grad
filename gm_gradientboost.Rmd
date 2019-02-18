@@ -1,0 +1,133 @@
+---
+title: "Gradient Boosted Model dev"
+author: "Matthew Townley"
+date: "2/11/2019"
+output: html_document
+---
+
+# Gradient boosted model
+
+```{r load_data, echo = F, include = T, eval = T}
+a_frame = read.csv(file = "y1314_clean.csv", as.is = T)
+
+```
+
+
+
+```{r gbm_setup, echo = F, include = T, eval = T}
+libs = c("xgboost", "caret", "rsample", "pdp", "lime")
+# lapply(libs, install.packages, character.only = T)
+lapply(libs, library, character.only = T)
+
+a_frame = a_frame[which(!is.na(a_frame$grad_r)),]
+set.seed(1274)
+g_split <- initial_split(a_frame, prop = (3/4))
+g_train <- training(g_split)
+g_test <- testing(g_split)
+
+
+features_train = g_train[,-1]
+response_train = g_train[,"grad_r"]
+
+features_test = g_test[,-1]
+response_test = g_test[,"grad_r"]
+
+```
+
+
+
+```{r gbm_model}
+params = list(
+  eta = .1,
+  max_depth = 10,
+  min_child_weight = 3,
+  subsample = .8,
+  colsample_bytree = .9
+)
+
+start.time = proc.time()
+
+xgb.fit.final = xgb.cv(
+    data = features_train %>% as.matrix,
+    label = response_train,
+    params = params,
+    missing = NA,
+    nrounds = 5000,
+    nfold = 5,
+    # objective = "reg:linear",  # for regression models
+    verbose = 0,               # silent,
+    early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+  )
+proc.time() - start.time
+
+importance_matrix <- xgb.importance(model = xgb.fit.final)
+
+# variable importance plot
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain")
+```
+```{r}
+pdp = xgb.fit.final %>%
+  partial(xgb.fit.final, pred.var = "abs_r", n.trees = 109, grid.resolution = 100, train = features_train)   %>%
+  autoplot(rug = TRUE, train = features_train) +
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle("PDP")
+
+ice <- xgb.fit.final %>%
+  partial(pred.var = "Gr_Liv_Area_clean", n.trees = 1576, grid.resolution = 100, train = features_train, ice = TRUE) %>%
+  autoplot(rug = TRUE, train = features_train, alpha = .1, center = TRUE) +
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle("ICE")
+
+gridExtra::grid.arrange(pdp, ice, nrow = 1)
+```
+
+```{r param_search, echo = T, include = T, eval = T}
+
+start.time = proc.time()
+
+param.grid = expand.grid(
+  eta = c(.01, .05, .1, .3),
+  max_depth = c(1, 3, 5, 7, 9),
+  min_child_weight = c(1, 3, 5, 7),
+  subsample = c(.65, .8, 1), 
+  colsample_bytree = c(.8, .9, 1),
+  optimal_trees = NA,               # a place to dump results
+  min_RMSE = NA                     # a place to dump results
+)
+
+param.grid.sample = param.grid[sample(x = 1:nrow(param.grid), size = 30, replace = F),]
+
+for (i in 1:nrow(param.grid.sample)) {
+  
+  params = list(
+  eta = param.grid.sample[i, "eta"],
+  max_depth = param.grid.sample[i, "max_depth"],
+  min_child_weight = param.grid.sample[i, "min_child_weight"],
+  subsample = param.grid.sample[i, "subsample"],
+  colsample_bytree = param.grid.sample[i, "colsample_bytree"]
+)
+  
+  xgb.tune = xgb.cv(
+    data = features_train %>% as.matrix,
+    label = response_train,
+    params = params,
+    missing = NA,
+    nrounds = 5000,
+    nfold = 5,
+    # objective = "reg:linear",  # for regression models
+    verbose = 0,               # silent,
+    early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+    )
+
+  param.grid.sample$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+  param.grid.sample$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+
+  # print(paste("Iteration:", i, "| test_rmse:", min(xgb.tune$evaluation_log$test_rmse_mean)))
+  print(param.grid.sample[i,])
+
+}
+
+proc.time() - start.time
+
+```
+
