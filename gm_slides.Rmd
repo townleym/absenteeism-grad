@@ -1,20 +1,51 @@
 ---
-title: "Slides"
-author: "Matthew Townley"
+title: "Effect of absenteeism on graduation rates"
+author: "Helen Levy-Myers and Matthew Townley"
 date: "2/11/2019"
-output: html_document
+output: slidy_presentation
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Effect of absenteeism on graduation rates
 
-Ecological analysis of school-level data to understand whether high rates of chronic absenteeism predict low graduation rates.
+```{r gbm_setup, echo = F, include = F, eval = T}
 
-Some links (so I can close these in my browser)
+libs = c("xgboost", "caret", "rsample", "pdp", "lime")
+# lapply(libs, install.packages, character.only = T)
+lapply(libs, library, character.only = T)
 
+# read our data
+a_frame = read.csv(file = "y1314_clean.csv", as.is = T)
+# First make sure we have rates only $0 <= r <=1$
+dim(a_frame)
+a_frame = a_frame[which(!is.na(a_frame$abs_r)),]
+a_frame = a_frame[which(a_frame$abs_r <= 1 & a_frame$abs_r > 0),]
+# a_frame$abs_r = round(a_frame$abs_r, 2)
+
+a_frame = a_frame[which(!is.na(a_frame$grad_r)),]
+a_frame = a_frame[which(a_frame$grad_r <= 1 & a_frame$grad_r > 0),]
+# a_frame$grad_r = round(a_frame$grad_r, 2)
+dim(a_frame)
+
+set.seed(1274)
+g_split <- initial_split(a_frame, prop = (3/4))
+g_train <- training(g_split)
+g_test <- testing(g_split)
+
+
+features_train = g_train[,-1]
+response_train = g_train[,"grad_r"]
+
+features_test = g_test[,-1]
+response_test = g_test[,"grad_r"]
+
+```
+
+# 
+
+This is an ecological analysis of 20,000 high schools in the united states to understand whether high rates of chronic absenteeism predict low graduation rates.
 
 # Data
 
@@ -24,15 +55,45 @@ These data come from ....
 <https://ocrdata.ed.gov/DataFileUsersManual>
 
 
-
 # Measures
 
-## Graduation rate
+- Graduation rate
+  - Number of graduating students divided by
+  - The number of students who started (9th grade?) net of in/outmigration
 
-## Absenteeism rate
+- Absenteeism rate
+  - ? proportion of students who have missed (5? 15? days)
+  - 
 
-## Covariates
+- Covariates
 
-- Structural conditions (teacher certification, teacher absenteeism)
-- administrative care (civil rights, sexual assault, violations, disciplinary actions)
-- student engagement/achievement (sports participation, enrollment in higher math, AP)
+  - Structural conditions (teacher certification, teacher absenteeism)
+  - administrative care (civil rights, sexual assault, violations, disciplinary actions)
+  - student engagement/achievement (sports participation, enrollment in higher math, AP)
+
+# Question
+
+Will reducing absenteeism improve high school graduation rates? And if so, can the analysis suggest any approaches to reducing absenteeism?
+
+# Data
+
+```{r eda_plots, echo = F, include = F}
+
+require(hexbin)
+hbin = hexbin(a_frame$abs_r, a_frame$grad_r, xbins = 20, xlab = "Absenteeism Rate", ylab = "Graduation Rate")
+plot(hbin)
+# with(a_frame, lines(abs_r ~ grad_r))
+# abline(lm(grad_r ~ abs_r, data = a_frame))
+```
+
+```{r}
+cor(a_frame) %>% round(2)
+:w
+```
+
+# Relationship between absenteeism and graduation
+
+# Causal model
+
+
+
