@@ -43,27 +43,31 @@ response_test = g_test[,"grad_r"]
 
 ```
 
-# 
-
-This is an ecological analysis of 20,000 high schools in the united states to understand whether high rates of chronic absenteeism predict low graduation rates.
+This is an ecological analysis of 20,000 high schools in the United States to understand whether high rates of chronic absenteeism predict low high school graduation rates.
 
 # Data
 
-These data come from ....
+The data comes from ....
 
 <https://www2.ed.gov/about/inits/ed/edfacts/data-files/index.html#acgr>
+
 <https://ocrdata.ed.gov/DataFileUsersManual>
 
 
 # Measures
 
-- Graduation rate
-  - Number of graduating students divided by
-  - The number of students who started (9th grade?) net of in/outmigration
+- Graduation rate (Adjusted Cohort Graduation Rate)
 
-- Absenteeism rate
-  - ? proportion of students who have missed (5? 15? days)
-  - 
+  - Number of graduating students divided by
+  - The number of students who started 9th grade net of in/out migration
+  - Percentage of students that graduate in four years with a regular high school diploma
+  - https://nces.ed.gov/fastfacts/display.asp?id=805
+ 
+
+- Chronic Absenteeism rate
+  - Students that miss 15 days or more in a school year
+  - All absences of more than 50% of the day count, sickness, vacation, court appearance, susupension, etc.
+  - https://ocrdata.ed.gov/Downloads/Master-List-of-CRDC-Definitions.pdf
 
 - Covariates
 
@@ -86,14 +90,123 @@ plot(hbin)
 # abline(lm(grad_r ~ abs_r, data = a_frame))
 ```
 
-```{r}
-cor(a_frame) %>% round(2)
-:w
+```{r grad_rate_plots}
+
+plot(density(a_frame$grad_r), main = "Distribution of rates", xlab = "(Proportions)")
+points(density(a_frame$abs_r), type = "l", lty = 2)
+legend("topleft", lty = 1:2, legend = c("Graduation Rate", "Absenteeism Rate"))
+
+knitr::kable(sapply(a_frame[,c("abs_r", "grad_r")], quantile, probs = 0:4 / 4) %>% t %>% round(3), caption = "Quartiles")
+
+# cor(a_frame) %>% round(2)
 ```
 
-# Relationship between absenteeism and graduation
+# Linear relationship between absenteeism and graduation
 
-# Causal model
+First, estimate the baseline relationship between absenteeism and graduation.
+
+$E[Y_{\mathrm{grad}}] \sim \beta_0 + \beta_x X_{x = \mathrm{abs}} + \epsilon$
+
+There is a weak, non-trivial negative effect of absenteeism on graduation rates
+
+- From a baseline graduation rate of 89%
+- Every unit increase in the absenteeism rate drops the graduation rate by 41% points
+- We can estimate the graduation rate with about the same precision as the interquartile range in the original data
+
+```{r base_linear_model, echo = F, include = T}
+basemod = lm(grad_r ~ abs_r, data = a_frame)
+summary(basemod)
+# summary(basemod)$sigma
+# sapply(cframe, quantile, 0:10/10, na.rm = T)
+# sapply(a_frame, quantile, (100/400) * (0:4), na.rm = T)
+```
+
+```{r grad_rate_quantiless, echo = F, include = T}
+knitr::kable(quantile(a_frame$grad_r, 0:4 / 4, na.rm = T) %>%t, caption = "Graduation Rate (quartiles)")
+# quantile(a_frame$abs_r, 0:4 / 4, na.rm = T)
+```
+
+# Linear model with all covariates
+
+We expect some relationship between measures of student engagement and absenteeism. A model estimating the effect of absenteeism should account for those effects
+
+$E[Y_{\mathrm{grad}}] \sim \beta_0 + \beta_x X_i + \epsilon$
+
+
+```{r kitchen_sink_linear_model, echo= F, include = T}
+# minus absenteeism & student/teacher ratio (because we already have counts of teachers)
+mondo1 = lm(grad_r ~ ., data = a_frame, na.action = "na.omit")
+# summary(mondo1)
+
+mcoeff = summary(mondo1)$coefficients
+mcoeff = mcoeff[which(mcoeff[,4] < 0.05),]
+# mcoeff[order(abs(mcoeff[,1]), decreasing = T),]
+# barchart(mcoeff[order(abs(mcoeff[,1]), decreasing = T),1][-1])
+# mcoeff[order(mcoeff[,1], decreasing = T),]
+meff = mcoeff[order(mcoeff[,1], decreasing = T),1][-1]
+plot(meff, type = 'h', ylim = c(-0.5,0.5), ylab = "Difference (%point)", xaxt = "n", xlab = "", bty = "n")
+abline(h = 0)
+axis(1, at = 1:length(meff), labels = names(meff), las = 2, cex.axis = 0.5)
+title(main = "Marginal effects")
+# anova(basemod, mondo1)
+# anova(mondo1, mondo2)$RSS
+# anova(mondo1, mondo2)$"Sum of Sq"
+```
+
+With this approach we narrow the precision of our estimate a little to 14.6% (down from 16.6%)
+
+We think we can do better.
+
+# Machine learning model
+
+Linear models bring with them a lot of assumptions that sometimes limit their effectiveness.
+
+A fammily of techniques called *ensemble models* from the machine learning literature allow us to find an empirical model of the data that can potentially estimate with greater precision.
+
+Here we attempted a *gradient boosted machine* that gets our mean squared error down to about 12%
+
+```{r gbm_grad_rate, echo = F, include = T}
+
+params = list(
+  eta = .1,
+  max_depth = 9,
+  min_child_weight = 3,
+  subsample = .8,
+  colsample_bytree = .9
+)
+
+start.time = proc.time()
+
+xgb.fit.final = xgboost(
+    data = features_train %>% as.matrix,
+    label = response_train,
+    params = params,
+    missing = NA,
+    nrounds = 5000,
+    nfold = 5,
+    # objective = "reg:linear",  # for regression models
+    verbose = 0,               # silent,
+    early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
+  )
+proc.time() - start.time
+
+xgb.pred = predict(xgb.fit.final, newdata = features_test %>% as.matrix)
+rmse.test = sqrt(sum((response_test - xgb.pred)**2) / length(xgb.pred))
+knitr::kable((rmse.test %>% round(4)) * 100 , caption = "Mean Squared Error", col.names = "Graduation Rate")
+
+```
+
+# Variable importance
+
+The machine learning approach gives a different view of the factors that predict graduation rates. In particular enrollment in higher math (calculus), sports participation (any), and the absenteeism rate all contribute the most to predicting graduation rates.
+
+```{r gbm_variable_importance, echo = F, include = T}
+importance_matrix <- xgb.importance(model = xgb.fit.final)
+
+# variable importance plot
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain")
+
+```
 
 
 
