@@ -16,10 +16,23 @@ Ecological analysis of school-level data to understand whether high rates of chr
 Some links (so I can close these in my browser)
 
 
-# Load/clean data
+# Data
 
 These data come from ....
 
 <https://www2.ed.gov/about/inits/ed/edfacts/data-files/index.html#acgr>
 <https://ocrdata.ed.gov/DataFileUsersManual>
 
+
+
+# Measures
+
+## Graduation rate
+
+## Absenteeism rate
+
+## Covariates
+
+- Structural conditions (teacher certification, teacher absenteeism)
+- administrative care (civil rights, sexual assault, violations, disciplinary actions)
+- student engagement/achievement (sports participation, enrollment in higher math, AP)

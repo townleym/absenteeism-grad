@@ -82,6 +82,16 @@ lapply(s_gradr, mean, na.rm = T)
 
 ```
 
+```{r grad_r_split_exp}
+ta = a_frame[,c("abs_r", "grad_r")]
+
+splitpoint = quantile(ta$abs_r, probs = 0.9)
+ta$treat = 0
+ta[which(ta$abs_r > splitpoint), "treat"] = 1
+
+with(ta, boxplot(grad_r ~ treat))
+
+```
 
 ## Where to split
 
@@ -130,12 +140,12 @@ gini = function(vec) {
 
 Take a look at every possible split
 
-```{r dichotomoze_abs_exp1}
+```{r dichotomize_abs_exp1}
 
 gradr = a_frame[,"grad_r"]
 absr = a_frame[,"abs_r"]
 
-splitpoint = 0.5
+splitpoint = 0.9
 f_absr = cut(absr, breaks = quantile(absr, probs = c(0,splitpoint,1)))
 
 s_gradr = split(gradr, f = f_absr)
@@ -164,6 +174,8 @@ splitpoints = 1:99 / 100
 entropies = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = entropy) 
 entropies = do.call('rbind', entropies)
 rownames(entropies) = splitpoints
+entropies[order(entropies[,2], decreasing = F),][1:10,]
+
 
 ginis = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = gini) 
 ginis = do.call('rbind', ginis)
@@ -172,7 +184,7 @@ rownames(ginis) = splitpoints
 mses = lapply(splitpoints, split_walker, y = gradr, f = absr, FN = rmse) 
 mses = do.call('rbind', mses)
 rownames(mses) = splitpoints
-mses[order(mses[,2], decreasing = F),][1:10,]
+mses[order(mses[,2], decreasing = T),][1:10,]
 
 
 ```
@@ -181,12 +193,12 @@ mses[order(mses[,2], decreasing = F),][1:10,]
 
 
 ```{r dichotomize_abs}
-f_absr = cut(a_frame$abs_r, breaks = quantile(a_frame$abs_r, probs = c(0,0.5,1)))
+f_absr = cut(a_frame$abs_r, breaks = quantile(a_frame$abs_r, probs = c(0,0.85,1)))
 lapply(split(a_frame$grad_r, f_absr), entropy)
 lapply(split(a_frame$grad_r, f_absr), function(x) {mean(x, na.rm = T)})
 
 a_frame$treat = 0
-a_frame[which(a_frame$abs_r >= quantile(a_frame$abs_r, 0.5)),"treat"] = 1
+a_frame[which(a_frame$abs_r >= quantile(a_frame$abs_r, 0.85)),"treat"] = 1
 
 aggregate(grad_r ~ treat, data = a_frame, FUN = "mean")
 
@@ -236,6 +248,59 @@ response_train = a_frame[,'treat']
 
 ```
 
+```{r logr_prop_score, echo = T, include = T, eval = T}
+
+pp_fit = glm(treat ~ ., data = a_frame[, -c(1,2)], family = binomial())
+logit = fitted(pp_fit)
+
+odds = exp(logit)
+prob = odds / (1 + odds)
+
+# a_frame$pihat.log = pp_fit$fitted.values
+```
+
+
+
+
+```{r}
+#Create Matched Dataset
+t_frame = data.frame(a_frame, pps = fitted(pp_fit), stringsAsFactors = F)
+
+# lm(treat ~ ., data = a_frame[, -c(1,2)])
+# to make optimach work
+options("optmatch_max_problem_size" = Inf)
+opt.mtch <- matchit(reformulate(colnames(t_frame[,-36]), response = 'treat'), 
+                    data = t_frame,
+                     distance = t_frame[,"pps"],
+                     method = "optimal")
+matched.opt <- match.data(opt.mtch)
+
+plot(density(matched.opt[which(matched.opt$treat == 0), "pps"]))
+points(density(matched.opt[which(matched.opt$treat == 1), "pps"]), type = "l", lty = 2)
+```
+
+Net of confounding, there appears to be about a 10% decrease in graduation rates attributable to high absenteeism alone.
+
+```{r}
+#Outcome Analysis
+mod.opt.mtch <- lm(grad_r ~ treat, data=matched.opt)
+summary(mod.opt.mtch) # this is cool
+
+
+```
+
+```{r}
+a_split = split(matched.opt, f = matched.opt$treat)
+
+means = aggregate(x = matched.opt, by = list(matched.opt$treat), function(x) { mean(x, na.rm = T)})
+sds = aggregate(x = matched.opt, by = list(matched.opt$treat), function(x) { sd(x, na.rm = T)})
+
+d = (means[2,] - means[1,]) / sqrt(apply(sds**2, 2, sum) / 2)
+sort(d)
+
+```
+
+
 
 ```{r gbm_prop_score, echo = T, include = T, eval = T}
 set.seed(1228)
@@ -274,7 +339,7 @@ prob = odds / (1 + odds)
 # summary(xgb.fit1)
 ```
 
-```{r}
+```{r, echo = T, eval = F, include = F}
 source('~/Documents/rfuns/mMisc/R/mMisc.R')
 
 roc_ps = roclines(features_train, logit)
@@ -293,91 +358,10 @@ boxplot(split(prob, f = a_frame$treat), xlab = "treatment", ylab = "estimated pr
 # plot(density(prob))
 ```
 
-
-# assess balance
-
 ```{r}
 
-start.time = proc.time()
-
-xgb.fit.final = xgboost(
-  data = features_train %>% as.matrix,
-  label = response_train,
-  params = params,
-  missing = NA,
-  nrounds = 1000,
-  nfold = 5,
-  # objective = "reg:linear",  # for regression models
-  verbose = 0,               # silent,
-  early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
-
-  )
-proc.time() - start.time
-
-importance_matrix <- xgb.importance(model = xgb.fit.final)
-
-# variable importance plot
-xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain")
-```
-```{r}
-pdp = xgb.fit.final %>%
-  partial(xgb.fit.final, pred.var = "abs_r", n.trees = 109, grid.resolution = 100, train = features_train)   %>%
-  autoplot(rug = TRUE, train = features_train) +
-  scale_y_continuous(labels = scales::dollar) +
-  ggtitle("PDP")
-
-ice <- xgb.fit.final %>%
-  partial(pred.var = "Gr_Liv_Area_clean", n.trees = 1576, grid.resolution = 100, train = features_train, ice = TRUE) %>%
-  autoplot(rug = TRUE, train = features_train, alpha = .1, center = TRUE) +
-  scale_y_continuous(labels = scales::dollar) +
-  ggtitle("ICE")
-
-gridExtra::grid.arrange(pdp, ice, nrow = 1)
-```
-
-```{r param_search, echo = T, include = T, eval = T}
-
-start.time = proc.time()
-
-param.grid = expand.grid(
-  eta = c(.01, .05, .1, .3),
-  max_depth = c(1, 3, 5, 7),
-  min_child_weight = c(1, 3, 5, 7),
-  subsample = c(.65, .8, 1), 
-  colsample_bytree = c(.8, .9, 1),
-  optimal_trees = NA,               # a place to dump results
-  min_RMSE = NA                     # a place to dump results
-)
-
-for (i in 1:nrow(param.grid)) {
-  
-  params = list(
-  eta = param.grid[i, "eta"],
-  max_depth = param.grid[i, "max_depth"],
-  min_child_weight = param.grid[i, "min_child_weight"],
-  subsample = param.grid[i, "subsample"],
-  colsample_bytree = param.grid[i, "colsample_bytree"]
-)
-  
-  xgb.tune = xgb.cv(
-    data = features_train %>% as.matrix,
-    label = response_train,
-    params = params,
-    missing = NA,
-    nrounds = 5000,
-    nfold = 5,
-    # objective = "reg:linear",  # for regression models
-    verbose = 0,               # silent,
-    early_stopping_rounds = 10 # stop if no improvement for 10 consecutive trees
-    )
-
-  hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
-  hyper_grid$min_RMSE[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
-
-
-}
-
-proc.time() - start.time
-
+ta = data.frame(pp = prob, treat = a_frame$treat)
+plot(density(ta[which(ta$treat == 0), "pp"]), col = "blue")
+points(density(ta[which(ta$treat == 1), "pp"]), type = "l", col = "green")
 ```
 
