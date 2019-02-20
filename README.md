@@ -1,10 +1,8 @@
 # Intro
 
-This is an active project analyzing data from the US Department of Education to understand the relationship between chronic absenteeism and graduation rates.
+This is an active project analyzing data from the US Department of Education to understand the relationship between chronic absenteeism and graduation rates. It is an ecological analysis of about 20,000 high schools in the US.
 
-It is an ecological analysis of all of the high schools in the US.
-
-*Caveat:* Much of this is actively in progress. As of this writing (2/20/2019) the propensity models (espeically) are incomplete
+**Caveat:** Much of this is actively in progress. As of this writing (2/20/2019) the propensity models (espeically) are incomplete
 
 # Purpose
 
@@ -46,9 +44,9 @@ The data were amalgamated from various sources at [US Department of Education](h
 
 # Code/scripts
 
-- gm_dataprep.Rmd: produced the included data file `y1314_clean.csv`
-- gm_gradientboost.Rmd: random forest + gradient boosted models
-- gm_propscore.Rmd: propensity score estimation/evaluation (causal models)
-- gm_slides.Rmd: produced the [slidy presentation visible at RPubs](http://rpubs.com/mtown/468907)
-- grad_model.Rmd: A scratch space where much of the content in the above files was developed
+- [gm_dataprep.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_dataprep.Rmd): produced the included data file `y1314_clean.csv` from earlier datafiles not included on this repo
+- [gm_gradientboost.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_gradientboost.Rmd): random forest + gradient boosted models
+- [gm_propscore.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_propscore.Rmd): propensity score estimation/evaluation (causal models)
+- [gm_slides.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_slides.Rmd): produced the [slidy presentation visible at RPubs](http://rpubs.com/mtown/468907)
+- [grad_model.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/grad_model.Rmd): A scratch space where much of the content in the above files was developed
 
