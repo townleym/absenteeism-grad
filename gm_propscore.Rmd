@@ -121,8 +121,11 @@ car::vif(lm(grad_r ~ ., data = a_frame[,keepvars]))
 
 Estimate quick linear and log linear models
 ```{r log_linear_model}
-#
+lmod = lm(grad_r ~ ., data = a_frame[,keepvars])
+llmod = lm(I(log(grad_r)) ~ ., data = a_frame[,keepvars])
 
+summary(llmod)
+exp(coef(llmod))
 
 ```
 
