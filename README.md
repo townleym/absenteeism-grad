@@ -2,7 +2,7 @@
 
 This is an active project analyzing data from the US Department of Education to understand the relationship between chronic absenteeism and graduation rates. It is an ecological analysis of about 20,000 high schools in the US.
 
-**Caveat:** Much of this is actively in progress. As of this writing (2/20/2019) the propensity models (espeically) are incomplete
+**Caveat:** Much of this is actively in progress. As of this writing (2/20/2019) the propensity models (especially) are incomplete
 
 # Purpose
 
