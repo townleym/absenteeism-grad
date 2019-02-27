@@ -27,32 +27,15 @@ There's ... lots of problems in the data we must wrangle first
 
 Need Helen to enter text about where 'joined1314' came from
 
-```{r data_setup, eval=TRUE, echo=F}
+```{r load_data, echo = F, eval = T, include = F}
 require(magrittr)
 setwd('/Users/matt/Documents/projects/absenteeism-grad')
 
-y14 = read.csv("joined1314.csv", header = TRUE, as.is = T) 
-y16 = read.csv("joined1516a.csv", header = TRUE, as.is = T)
+y14 = read.csv("data/joined1314.csv", header = TRUE, as.is = T) 
+y16 = read.csv("data/joined1516a.csv", header = TRUE, as.is = T)
 
-dim(y14)
-y14$ALL_RATE_1314 %>% table %>% cbind
-y14[grepl("-", y14$ALL_RATE_1314), "ALL_RATE_1314"] %>% table %>% cbind %>% sum
-
-ta = y14[c(grep("^GE", y14$ALL_RATE_1314), grep("^LE", y14$ALL_RATE_1314)), c("ALL_RATE_1314", "TOT_ENR_F", "TOT_ENR_M")]
-# ta[, c("ALL_RATE_1314", "TOT_ENR_F", "TOT_ENR_M")]
-ta2 = apply(ta[, c("TOT_ENR_F", "TOT_ENR_M")], 1, function(x) {sum(x, na.rm = T)})
-ta = data.frame(ta, tot_enr = ta2, stringsAsFactors = F)
-head(ta)
-ta[1:10, c("ALL_RATE_1314", "tot_enr")]
-ta_list = split(ta[, "tot_enr"], f = ta[,"ALL_RATE_1314"])
-# ta_list = split(ta, f = ta[,"ALL_RATE_1314"])
-head(ta_list[[1]])
-
-sapply(ta_list, function(x) { quantile(x, 0:10 / 10, na.rm = T)})
-
-tata = y14[grep("^GE99", y14$ALL_RATE_1314),c("LEA_STATE", "LEA_NAME", "SCH_NAME", "TOT_ENR_F", "TOT_ENR_M")]
-tata[grep("MD", tata$LEA_STATE),]
-table(tata$LEA_STATE)
+str(y14)
+str(y16)
 ```
 
 Several things need to be fixed before we can analyze the data.
@@ -60,6 +43,7 @@ Several things need to be fixed before we can analyze the data.
 1. Most of the count columns are broken out by sex. Reaggregate those.
 2. The graduation rate field is text with a lot of things like 'GE' (greater than or equal)
 3. The data are counts. Lots of approaches to that. See the next top-level section
+4. Looks like missing values are coded with negative integers
 
 I've left these sections in for transparency about _how_ we're fixing up the data for analysis.
 
@@ -72,7 +56,17 @@ This is pretty easy since each column name has a trailing "_M" or "_F" respectiv
 I'll `grep` the column names for those that end with a "_M" or "_F" and simply add the two dataframes.
 
 ```{r collapse_sex, eval=T, echo=T} 
+# Use this function to find the non-matching column names
+"%notin%" = function(x, table) match(x, table, nomatch = 0) < 1
+
 # create a collapsed dataframe that is the sum of each of the sex-specific columns
+
+# This violates the principle of never do anything twice,
+# but each data frame has just enough difference to make such things
+# necessary
+
+###############################################################################
+# First y13-14 data
 colnames_m = names(y14)[grep('_M$', names(y14))]
 colnames_f = names(y14)[grep('_F$', names(y14))]
 sex_collapsed = y14[,colnames_m] + y14[,colnames_f]
@@ -81,9 +75,6 @@ sex_collapsed = y14[,colnames_m] + y14[,colnames_f]
 names(sex_collapsed) = lapply(names(sex_collapsed), function(x) {substr(x, 1, nchar(x) - 2)}) %>% unlist
 
 # add back the remaining columns
-# Use this function to find the non-matching column names
-"%notin%" = function(x, table) match(x, table, nomatch = 0) < 1
-
 othernames = names(y14)[which(names(y14) %notin% c(colnames_m, colnames_f))]
 
 # Create a new dataframe with the consolidated values
@@ -95,12 +86,47 @@ names(s14)[grep("LEAID", names(s14))] = "LEAID"
 # make all the column names lower case
 names(s14) = tolower(names(s14))
 
+###############################################################################
+# Next y15-16 data
+colnames_m = names(y16)[grep('_M$', names(y16))]
+colnames_f = names(y16)[grep('_F$', names(y16))]
+sex_collapsed = y16[,colnames_m] + y16[,colnames_f]
+
+# strip the trailing "_M" from the consolidated column names
+names(sex_collapsed) = lapply(names(sex_collapsed), function(x) {substr(x, 1, nchar(x) - 2)}) %>% unlist
+
+# add back the remaining columns
+othernames = names(y16)[which(names(y16) %notin% c(colnames_m, colnames_f))]
+
+# Create a new dataframe with the consolidated values
+s16 = data.frame(y16[,othernames], sex_collapsed, stringsAsFactors = F)
+# drop the duplicate column from the merge
+s16 = s16[,-grep("LEAID", names(s16))[2]]
+names(s16)[grep("LEAID", names(s16))] = "LEAID"
+
+# make all the column names lower case
+names(s16) = tolower(names(s16))
+
 # clean up
 # rm(list = c("colnames_m", "colnames_f", "othernames", "y14"))
 ```
 
 
 ## Turn all the Grad-rate text values into numeric
+
+It is stored as a text field. Let's take a look at the values and see how they distribute by counts of students.
+
+```{r data_setup, eval=TRUE, echo=F}
+dim(y14)
+y14$ALL_RATE_1314 %>% table %>% cbind
+aggregate(cbind(TOT_ENR_F, TOT_ENR_M) ~ ALL_RATE_1314, data = y14, FUN = sum)
+
+dim(y16)
+y16$ALL_RATE_1516 %>% table %>% cbind
+aggregate(cbind(TOT_ENR_F, TOT_ENR_M) ~ ALL_RATE_1516, data = y16, FUN = sum)
+
+```
+
 
 *Approach*: three things we have to do:
 
@@ -111,17 +137,22 @@ names(s14) = tolower(names(s14))
 For each case (respectively) we will: 
 
 1. Take the threshold number. I.e. GE80 = 80%
-2. Split the range
-3. Simply convert the numbers
+2. AND split the threshold and 100%
+3. Split the ranges
+4. Simply convert the numbers
 
 ```{r fix_grad_rate, echo = T, eval = T}
 # names(s14)[grep("rate", names(s14))]
-# uncomment to see all possible values
-# table(s14$all_rate_1314, useNA = "ifany") %>% cbind # what a mess
 
 # first, eliminate the NA rows
 s14 = s14[which(!is.na(s14$all_rate_1314)),]
+s16 = s16[which(!is.na(s16$all_rate_1516)),]
 
+# uncomment to see all possible values
+# table(s14$all_rate_1314, useNA = "ifany") %>% names
+# table(s16$all_rate_1516, useNA = "ifany") %>% names
+
+# in the 2014 data
 # 14-OCT is 10-14
 # 19-Nov is 11-19
 # 9-Jun is 6-9
@@ -136,82 +167,161 @@ s14[which(s14$all_rate_1314 == "14-Oct"), "all_rate_1314"] = "10-14"
 s14[which(s14$all_rate_1314 == "19-Nov"), "all_rate_1314"] = "11-19"
 s14[which(s14$all_rate_1314 == "9-Jun"), "all_rate_1314"] = "6-9"
 
-# Create a list of all the rate values, split by dashes
-ratesplit = strsplit(s14$all_rate_1314, "-")
-
 # encode the re-coding rules into a single function
 # the function works on a single vector (of any length) 
 # we can *apply* this function to the list created above
-numerifier = function(vec) {
+numerifier = function(vec, th = T) {
 
+# this is an ugly function full of conditional tests
+# the number of braces == stack overflow
 if(length(vec) == 1) {
-  
+ 
+  if(th) {
   # Case 1: the GE/LE/LT values 
-  if((grepl("^G", vec) | grepl("^L", vec))) {
-     return(as.numeric(substr(vec, 3, nchar(vec))) / 100) # return threshold
+  if( (grepl("^G", vec) | grepl("^L", vec)) ) {
+     tnum = as.numeric(substr(vec, 3, nchar(vec)))
+     return(tnum / 100) # return just the threshold
+   } else if(grepl("^PS", vec)) {
+     return(NA) # no idea what 'PS' means
+   } else { # Case 3: the single values
+     return(as.numeric(vec) / 100) # if a single number, return the number
+   } # end section that returns only threshold values
+  } else { # begin section that splits threshold and min/max
+  if(grepl("^G", vec)) {
+     tnum = as.numeric(substr(vec, 3, nchar(vec)))
+     return(mean(c(tnum, 100)) / 100) # split the threshold and 100
+   } else if(grepl("^L", vec)) {
+     tnum = as.numeric(substr(vec, 3, nchar(vec)))
+     return(mean(c(tnum, 0)) / 100) # split the threshold and 0
    } else if(grepl("^PS", vec)) {
      return(NA) # no idea what 'PS' means
    } else { # Case 3: the single values
      return(as.numeric(vec) / 100) # if a single number, return the number
    }
-}
- 
+ } # end section that splits threshold and min/max
+} # end single element vectors 
   # Case 2: the ranges (return midpoint)
   if(length(vec) > 1) {return(mean(as.numeric(vec))/100)}
-}
+} # end numerifier
 
+# 2014
+# Create a list of all the rate values, split by dashes
+ratesplit = strsplit(s14$all_rate_1314, "-")
 # try it
 # sapply(ratesplit[1:50], numerifier) # looks like it works
-
 # do 'em all
 s14$grad_rate = sapply(ratesplit, numerifier)
+s14$grad_rateb = sapply(ratesplit, numerifier, th = F) # grad rate that splits thresholds
+
+ratesplit = strsplit(s16$all_rate_1516, "-")
+s16$grad_rate = sapply(ratesplit, numerifier)
+s16$grad_rateb = sapply(ratesplit, numerifier, th = F)
 ```
 
+## missing values
 
+What are the values for missingness?
 
-```{r convert_to_rates, echo = T, eval = T}
-
-# absenteeism rate
-abs_r = s14[,"tot_absent"] / s14[,"tot_enr"]
-# plot(density(abs_r, na.rm = T))
-
-# graduation rate
-grad_r = s14[,"grad_rate"]
-# plot(density(grad_r, na.rm = T))
-
-
-# structural conditions
-sports_r = s14[,"tot_sssports"] / s14[,"tot_enr"] # 
-names_teach = names(s14)[grep("_fteteach", names(s14))] 
-teach_r = sweep(s14[,names_teach], 1, s14[,"tot_enr"], "/") # teacher ratios
-
-# administrative care
-names_civr = names(s14)[grep("_hb", names(s14))]
-civr_r = sweep(s14[,names_civr], 1, s14[,"tot_enr"], "/")
-
-# student engagement/achievement
-names_enr = names(s14)[grep("enr_", names(s14))]
-enr_r = sweep(s14[,names_enr], 1, s14[,"tot_enr"], "/")
-names_pass = names(s14)[grep("algpass_", names(s14))] # only have for algebra
-pass_r = sweep(s14[,names_pass], 1, s14[,"tot_enr"], "/")
-spart_r = s14[,"tot_sspart"] / s14[,"tot_enr"] # sports participation?
-names_ap = names(s14)[grep("_ap", names(s14))]
-ap_r = sweep(s14[,names_ap], 1, s14[,"tot_enr"], "/")
-names_gt = names(s14)[grep("_gt", names(s14))]
-gt_r = s14[,names_gt] / s14[,"tot_enr"]
-
-# combine into a dataframe so we can easily eliminate weird values
-a_frame = data.frame(grad_r, abs_r, teach_r, civr_r, enr_r, pass_r, spart_r, ap_r, gt_r)
-
-# Encoding NA/No information as negative values
-# summary(a_frame)
+```{r missing_values14}
+num_cols = sapply(s14, is.numeric) %>% which
+num_cols = num_cols[-1:-4]
+# as.vector(s14[,num_cols])[which(s14[,num_cols] < 1),] %>% unique
+ta = c(as.matrix(s14[,num_cols]))
+ta[which(ta < 0)] %>% unique
 
 # every row has a column with negative values
 # which means a row-wise deletion of NA will give us a 
 # zero-length dataset. This might wind up being the killer
-negs = which(apply(a_frame, 1, function(x) any(x < 1)))
-dim(a_frame[negs,]) # every row has a neg 
+negs = which(apply(s14[,num_cols], 1, function(x) any(x < 1)))
+dim(s14[negs,]) # every row has a neg 
 
-write.csv(a_frame, file = "y1314_clean.csv", row.names = F)
+# replace with NA
+s14[,num_cols] = replace(s14[,num_cols], s14[,num_cols] < 0, NA)
+
+```
+```{r missing_values16}
+num_cols = sapply(s16, is.numeric) %>% which
+num_cols = num_cols[-1:-4]
+# as.vector(s16[,num_cols])[which(s16[,num_cols] < 1),] %>% unique
+ta = c(as.matrix(s16[,num_cols]))
+ta[which(ta < 0)] %>% unique
+
+negs = which(apply(s16[,num_cols], 1, function(x) any(x < 1)))
+dim(s16[negs,]) # every row has a neg 
+
+s16[,num_cols] = replace(s16[,num_cols], s16[,num_cols] < 0, NA)
+```
+
+## Counts
+
+These can be converted to rates at a later time, but for now gather up the fields that seem to have relevant data (e.g. ignore a lot of the identifying fields) and write those into a separate dataframe.
+
+### For the 2014 School year
+
+```{r convert_to_rates, echo = T, eval = T}
+
+# absenteeism rate
+# abs_r = s14[,"tot_absent"] / s14[,"tot_enr"]
+# plot(density(abs_r, na.rm = T))
+
+# graduation rate
+# grad_r = s14[,"grad_rate"]
+# plot(density(grad_r, na.rm = T))
+
+# structural conditions
+names_sports = c("tot_sssports", "tot_ssteams", "tot_sspart")
+names_teach = names(s14)[grep("_fteteach", names(s14))] 
+
+# administrative care
+names_civr = names(s14)[grep("_hb", names(s14))]
+
+# student engagement/achievement
+names_enr = names(s14)[grep("enr_", names(s14))]
+names_pass = names(s14)[grep("algpass_", names(s14))] # only have for algebra
+names_ap = names(s14)[grep("_ap", names(s14))]
+names_gt = names(s14)[grep("_gt", names(s14))]
+names_other = c("tot_satact", "tot_absent", "all_cohort_1314")
+names_id = c("lea_state", "lea_name", "sch_name", "leaid", "schid", "ccd_latcod", "ccd_loncod")
+
+# grab all the values in the name vectors above
+allcolnames = sapply(ls(pattern = '^names'), get) %>% unlist %>% unname
+
+write.csv(s14[,allcolnames], file = "data/y1314_clean.csv", row.names = F)
+
+# clean up
+rm(list = ls(pattern = '^names'))
+```
+
+### For the 2016 School year
+
+```{r convert_to_rates, echo = T, eval = T}
+
+# absenteeism rate
+# abs_r = s16[,"tot_absent"] / s16[,"tot_enr"]
+# plot(density(abs_r, na.rm = T))
+
+# graduation rate
+# grad_r = s16[,"grad_rate"]
+# plot(density(grad_r, na.rm = T))
+
+# structural conditions
+names_sports = c("tot_sssports", "tot_ssteams", "tot_sspart")
+names_teach = names(s16)[grep("_fteteach", names(s16))] 
+
+# administrative care
+names_civr = names(s16)[grep("_hb", names(s16))]
+
+# student engagement/achievement
+names_enr = names(s16)[grep("enr_", names(s16))]
+names_pass = names(s16)[grep("algpass_", names(s16))] # only have for algebra
+names_ap = names(s16)[grep("_ap", names(s16))]
+names_gt = names(s16)[grep("_gt", names(s16))]
+names_other = c("tot_satact", "tot_absent", "all_cohort_1516")
+names_id = c("lea_state", "lea_name", "sch_name", "leaid", "schid")
+
+# grab all the values in the name vectors above
+allcolnames = sapply(ls(pattern = '^names'), get) %>% unlist %>% unname
+allcolnames %in% names(s16)
+write.csv(s16[,allcolnames], file = "data/y1516_clean.csv", row.names = F)
 ```
 
