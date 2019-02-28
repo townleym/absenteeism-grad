@@ -258,7 +258,7 @@ These can be converted to rates at a later time, but for now gather up the field
 
 ### For the 2014 School year
 
-```{r convert_to_rates, echo = T, eval = T}
+```{r finalize_2014, echo = T, eval = T}
 
 # absenteeism rate
 # abs_r = s14[,"tot_absent"] / s14[,"tot_enr"]
@@ -280,11 +280,16 @@ names_enr = names(s14)[grep("enr_", names(s14))]
 names_pass = names(s14)[grep("algpass_", names(s14))] # only have for algebra
 names_ap = names(s14)[grep("_ap", names(s14))]
 names_gt = names(s14)[grep("_gt", names(s14))]
-names_other = c("tot_satact", "tot_absent", "all_cohort_1314")
+names_other = c("tot_enr", "grad_rate", "grad_rateb", "tot_satact", "tot_absent", "all_cohort_1314")
 names_id = c("lea_state", "lea_name", "sch_name", "leaid", "schid", "ccd_latcod", "ccd_loncod")
 
 # grab all the values in the name vectors above
 allcolnames = sapply(ls(pattern = '^names'), get) %>% unlist %>% unname
+
+# last check for type
+sapply(s14[,allcolnames], class) %>% cbind
+# well look who sneaked in there
+s14$all_cohort_1314 = as.numeric(s14$all_cohort_1314)
 
 write.csv(s14[,allcolnames], file = "data/y1314_clean.csv", row.names = F)
 
@@ -294,7 +299,7 @@ rm(list = ls(pattern = '^names'))
 
 ### For the 2016 School year
 
-```{r convert_to_rates, echo = T, eval = T}
+```{r finalize_2016, echo = T, eval = T}
 
 # absenteeism rate
 # abs_r = s16[,"tot_absent"] / s16[,"tot_enr"]
@@ -316,12 +321,16 @@ names_enr = names(s16)[grep("enr_", names(s16))]
 names_pass = names(s16)[grep("algpass_", names(s16))] # only have for algebra
 names_ap = names(s16)[grep("_ap", names(s16))]
 names_gt = names(s16)[grep("_gt", names(s16))]
-names_other = c("tot_satact", "tot_absent", "all_cohort_1516")
+names_other = c("tot_enr", "grad_rate", "grad_rateb", "tot_satact", "tot_absent", "all_cohort_1516")
 names_id = c("lea_state", "lea_name", "sch_name", "leaid", "schid")
 
 # grab all the values in the name vectors above
 allcolnames = sapply(ls(pattern = '^names'), get) %>% unlist %>% unname
-allcolnames %in% names(s16)
+length(which(allcolnames %notin% names(s16)))
+
+# final type check
+sapply(s16[,allcolnames], class) %>% cbind
+
 write.csv(s16[,allcolnames], file = "data/y1516_clean.csv", row.names = F)
 ```
 

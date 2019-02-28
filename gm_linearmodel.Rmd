@@ -1,0 +1,153 @@
+---
+title: "Linear models"
+author: "Matthew Townley"
+date: "2/27/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+
+
+```{r load_data}
+libs = c("magrittr", "hexbin")
+lapply(libs, library, character.only = T)
+s14 = read.csv(file = "data/y1314_clean.csv", as.is = T)
+```
+
+
+# EDA
+
+
+## Collinearity
+
+Prima facie it is not hard to imagine some collinearity in this data. Writ large graduation is an outcome of high student engagement. At an individual scale absenteeism should be (negatively) associated with high student engagement. Our question is whether that holds at an ecological scale.
+
+We will use an [eigen decomposition](https://www.stat.cmu.edu/~cshalizi/mreg/15/lectures/lecture-17.pdf) to find factors that pose identifiability problems. My layman's understanding of non-identifiability is that vectors with eigen values close to zero suggest that they may be a linear combination of other factors. There are several possible problems. First, t results in infinite possible solutions to $(X^TX)^{-1}$ (which is to say that it is *degenerate* or *singular*). As my old professor Thomas Lumley said, this posed computing problems in the stone ages. But other problems remain. Chiefly is that the variance estimates will get very large, which causes problems for inference. And interpretability of association gets mixed up between the collinear factors. 
+
+First, identify the numeric, non identifier columns
+
+```{r numcols, echo = T, include = T, eval = T}
+# really need to clean this up
+numcols = which(sapply(s14, is.numeric))
+"%notin%" = function(x, table) match(x, table, nomatch = 0) < 1
+numcols = numcols[which(names(numcols) %notin% c("leaid", "schid", "ccd_latcod", "ccd_loncod"))]
+```
+
+Julian Faraway (p 119) gives an example of an eigen decomposition on the $X^TX$ matrix, but it only works if you have no missing values. Preserved here as an example.
+
+```{r eigen_faraway, echo = T, include = T, eval = F}
+x = as.matrix(s14[,numcols])
+e = eigen(t(x) %*% x)
+det(t(x) %*% x) # if = 0, matrix is singular
+e$val
+sqrt(e$val[1]/e$val)
+# VIF gives another view, that is not subject to missingness constraints
+car::vif(lm(grad_rate ~ ., data = data.frame(x))) 
+
+```
+
+Cosma Shalizi shows that we can do a similar analysis on the covariance matrix. That helps us get around the missingness problem.
+
+Some of the values are very close to zero.
+
+```{r eigen_vcov, echo = T, include = T, eval = T}
+x = as.matrix(s14[,numcols])
+var.x = var(x, na.rm = T)
+var.x.eigen = eigen(var.x)
+var.x.eigen$values %>% sort
+
+```
+
+We should take a look at those
+
+```{r eigen_vcov1, echo = T, include = T, eval = T}
+
+var.x.eigen$values[ which(var.x.eigen$values < 1e-10) ] 
+var.x[,which(var.x.eigen$values < 1e-10)] %>% colnames
+```
+
+There's two things to look for. One pretty easy, the other really, really hard.
+
+1. For elements in the eigenvectors that are very close to one other (easy)
+2. For elements in the eigenvectors that are some factor/multiple of combinations of some others (hard)
+
+The factors with small eigenvalues are related to teacher absenteeism and certification. We can probably drop teacher absenteeism intuitively since it's probably absorbing some of the effect of student absenteeism. That's worth a look.
+
+```{r}
+s14$gradcount = s14$all_cohort_1314 * s14$grad_rate
+with(s14, hexbin(gradcount, tot_enr, xbins = 20)) %>% plot
+lm(gradcount ~ tot_enr, data = s14) %>% summary
+
+
+```
+
+
+Before we go any further, does this look different if the values are rates?
+
+
+
+```{r eigen_vcov2, echo = T, include = T, eval = T}
+var.x.eigen$vectors[,which(var.x.eigen$values < 1e-10)] %>% signif(3)
+
+```
+
+summary(lm(abs_r ~ ., data = data.frame(x)))
+
+# ... but this one
+summary(lm(tot_apexam_oneormore ~ ., data = data.frame(x)))
+# why?
+colnames(x)
+e$vectors[,32]
+# look for very similar values
+e$vectors[,32] %>% signif(3)
+
+# distance between each eigenvalue in the eigenvector for the highest VIF 
+edist = dist(e$vectors[,32], method = "euclidean", diag = T)
+# look at just the values for variable # 32 (tot_apexam_oneormore)
+as.matrix(edist)[32,] %>% signif(3)
+# ...maybe distances as a proportion of the max?
+as.matrix(edist)[32,] / max(as.matrix(edist)[32,])
+# closest are
+sort(as.matrix(edist)[32,] / max(as.matrix(edist)[32,]) )
+# variable names for the 8 closest
+closest.idx = sort(as.matrix(edist)[32,] / max(as.matrix(edist)[32,]) ) %>% names %>% head(8) %>% as.numeric
+colnames(x)[closest.idx]
+# no surprise, can tot_apexam_oneormore do the work of the rest of the variables?
+
+# is the VIF the diag of the cov matrix?
+(cov(x) %>% diag)^(1/2) 
+car::vif(lm(grad_r ~ ., data = s14)) # not even close
+
+# what happens if we drop tot_apexam_oneormore?
+car::vif(lm(grad_r ~ . - tot_apexam_oneormore, data = s14))
+
+# Or drop all the ap exam variables except oneormore?
+car::vif(lm(grad_r ~ ., data = s14[,-c(29:34,36)]))
+
+# now how about the math variables
+data.frame(colnames(x), e$values)
+e$vectors[14,]
+as.matrix(edist)[14,] / max(as.matrix(edist)[14,])
+closest.idx = sort(as.matrix(edist)[14,] / max(as.matrix(edist)[14,]) ) %>% names %>% head(8) %>% as.numeric
+colnames(x)[closest.idx]
+car::vif(lm(grad_r ~ . -tot_algenr_gs0708, data = s14[,-c(29:34,36)]))
+
+# looks like dropping all the ap variables + early algebra enrollment
+# removes most of the problematic collinearities
+keepvars = names(s14[,-c(15,29:34,36)])
+car::vif(lm(grad_r ~ ., data = s14[,keepvars]))
+
+```
+
+Estimate quick linear and log linear models
+```{r log_linear_model}
+lmod = lm(grad_r ~ ., data = s14[,keepvars])
+llmod = lm(I(log(grad_r)) ~ ., data = s14[,keepvars])
+
+summary(llmod)
+exp(coef(llmod))
+
+```
