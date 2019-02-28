@@ -42,6 +42,15 @@ The data were amalgamated from various sources at [US Department of Education](h
 - [Adjusted Cohort Graduation Rates](https://www2.ed.gov/about/inits/ed/edfacts/data-files/index.html#acgr)
 - [Office of Civil Rights](https://ocrdata.ed.gov/)
 
+# Approach
+
+The four steps of the approach are roughly encoded into each of four scripts:
+
+1. Clean/prep the data [gm_dataprep.Rmd]:(https://github.com/townleym/absenteeism-grad/blob/master/gm_dataprep.Rmd)
+2. Fit linear and log-linear models
+3. Fit a model using gradient boosting: [gm_gradientboost.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_gradientboost.Rmd)
+4. Use propensity scores to estimate causal effects of absenteeism: [gm_propscore.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_propscore.Rmd)
+
 # Code/scripts
 
 - [gm_dataprep.Rmd](https://github.com/townleym/absenteeism-grad/blob/master/gm_dataprep.Rmd): produced the included data file `y1314_clean.csv` from earlier datafiles not included on this repo
