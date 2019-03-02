@@ -81,17 +81,141 @@ s14$gradcount = s14$all_cohort_1314 * s14$grad_rate
 with(s14, hexbin(gradcount, tot_enr, xbins = 20)) %>% plot
 lm(gradcount ~ tot_enr, data = s14) %>% summary
 
-
 ```
 
 
 Before we go any further, does this look different if the values are rates?
 
+```{r}
+numcols = which(sapply(s14, is.numeric))
+numcols = numcols[-which(names(numcols) %in% c("leaid", "schid", "ccd_latcod", "ccd_loncod", "grad_rate", "grad_rateb"))]
+
+rateframe = sweep(s14[,numcols], 1, s14[,"tot_enr"], "/")
+rateframe = data.frame(rateframe, s14[,c("grad_rate", "grad_rateb")])
+
+ratemod = lm(grad_rate ~ ., data = rateframe[,-which(names(rateframe) %in% c("gradcount", "grad_rateb", "tot_enr", "all_cohort_1314"))])
+summary(ratemod)
+```
+
+Wait... 1 degree of freedom?
+
+```{r}
+# The number of NAs is giving us problems
+ratemod$model %>% dim # only 41 observations remain
+
+```
+
+The VIF will probably explode given that the number of observations is only one greater than the number of variables in the model.
+
+```{r}
+car::vif(ratemod)
+```
+
+The NA values are killing us. Row-wise deletion leaves us with very few complete observations:
+
+```{r}
+sapply(rateframe, function(x) {length(which(is.na(x)))})
+```
+
+We've got two options
+
+1. PCA regression
+2. Combine subject enrollment/pass factors
+
+I'm in favor of the latter for two reasons. First is interpetability and second is that theortecially the number of students who take/pass algebra is probably more useful than whether they do it in the 8th grade.
 
 
-```{r eigen_vcov2, echo = T, include = T, eval = T}
+```{r}
+algenr = apply(s14[,grep("algenr", names(s14))], 1, function(x) sum(x, na.rm = T))
+algpass = apply(s14[,grep("algpass", names(s14))], 1, function(x) sum(x, na.rm = T))
+
+s14 = s14[,-c(grep("algenr", names(s14)), grep("algpass", names(s14)))]
+s14 = data.frame(s14, algenr, algpass, stringsAsFactors = F)
+sapply(s14, function(x) {length(which(is.na(x)))})
+```
+
+# Another eigen decomposition
+
+```{r}
+numcols = which(sapply(s14, is.numeric))
+numcols = numcols[-which(names(numcols) %in% c("leaid", "schid", "ccd_latcod", "ccd_loncod", "grad_rateb"))]
+
+var.x = var(s14[,numcols], na.rm = T)
+var.x.eigen = eigen(var.x)
+var.x.eigen$values[which(var.x.eigen$values < 1e-10)]
+
 var.x.eigen$vectors[,which(var.x.eigen$values < 1e-10)] %>% signif(3)
 
+```
+
+Looks pretty clean
+
+## EDA
+
+How's the NAs?
+
+```{r na_counts}
+sapply(rateframe, function(x) {length(which(is.na(x)))})
+
+```
+
+If we do a linear model, the model frame will tell us how many observations we have left after NA deletion
+
+```{r}
+numcols = which(sapply(s14, is.numeric))
+numcols = numcols[-which(names(numcols) %in% c("leaid", "schid", "ccd_latcod", "ccd_loncod", "grad_rateb"))]
+
+mod1 = lm(gradcount ~ ., data = s14[,numcols])
+summary(mod1)
+
+```
+Only 3227 degrees of freedom means we've lost almost 17,000 records.
+
+gifted/talented and ap enrollment are the killers. Half of the observations are NA.
+
+What do we want to bet that there are no zeroes in either of those columns?
+
+
+```{r}
+summary(s14[,numcols])
+
+dim(s14[which(is.na(s14$tot_apenr)),])
+dim(s14[which(!is.na(s14$tot_apenr) & s14$tot_apenr <1),])
+
+dim(s14[which(is.na(s14$tot_gtenr)),])
+dim(s14[which(!is.na(s14$tot_gtenr) & s14$tot_gtenr <1),])
+
+dim(s14[which(is.na(s14$tot_apmathenr)),])
+dim(s14[which(!is.na(s14$tot_apmathenr) & s14$tot_apmathenr <1),])
+
+dim(s14[which(is.na(s14$tot_apscienr)),])
+dim(s14[which(!is.na(s14$tot_apscienr) & s14$tot_apscienr <1),])
+
+```
+Don't have to do too much of this to see that a lot of the missings are probably zeroes
+
+This dataset sucks.
+
+Need to impute
+
+```{r}
+library(mice)
+```
+
+Also why trees probably do better
+
+Let's construct some models
+
+# Models
+
+How's the NAs?
+
+```{r linmod, echo = T, include = T, eval = T}
+numcols = which(sapply(s14, is.numeric))
+numcols = numcols[-which(names(numcols) %in% c("leaid", "schid", "ccd_latcod", "ccd_loncod", "grad_rateb"))]
+
+
+mod1 = lm(grad_rate ~ . -algenr, data = s14[,numcols])
 ```
 
 summary(lm(abs_r ~ ., data = data.frame(x)))
